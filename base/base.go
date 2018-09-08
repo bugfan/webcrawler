@@ -2,8 +2,11 @@ package base
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"sync"
 )
 
 // request
@@ -119,4 +122,86 @@ type StopSign interface {
 	DealCount(code string) uint32
 	DealTotal() uint32
 	Summary() string
+}
+
+// 实体池 实现类型
+type myPool struct {
+	total       uint32
+	etype       reflect.Type
+	genEntity   func() Entity
+	container   chan Entity
+	idContainer map[uint32]bool
+	m           sync.Mutex
+}
+
+func (s *myPool) Take() (Entity, error) {
+	e, ok := <-s.container
+	if !ok {
+		return nil, errors.New("The inner container is invalid!")
+	}
+	s.idContainer[e.Id()] = false
+	return e, nil
+}
+func (s *myPool) Total() uint32 {
+	return s.total
+}
+func (s *myPool) Used() uint32 {
+	return uint32(len(s.container))
+}
+func (s *myPool) Return(e Entity) error {
+	if e == nil {
+		return errors.New("The return entity is nil")
+	}
+	if s.etype != reflect.TypeOf(e) {
+		return errors.New("Type is not match!")
+	}
+	eid := e.Id()
+	caseResult := s.optidContianer(eid, false, true)
+	if caseResult == 1 {
+		s.container <- e
+		return nil
+	} else if caseResult == 0 {
+		return errors.New("Entity  is already in the pool!")
+	} else {
+		return errors.New("Entity id is illegal!!")
+	}
+}
+func (s *myPool) optidContianer(eid uint32, oldValue bool, newValue bool) int8 {
+	s.m.Lock()
+	defer s.m.Unlock()
+	v, ok := s.idContainer[eid]
+	if !ok {
+		return -1
+	}
+	if v != oldValue {
+		return 0
+	}
+	s.idContainer[eid] = newValue
+	return 1
+}
+
+// 创建一个实体pool
+func NewPool(total uint32, entityType reflect.Type, genEntity func() Entity) (Pool, error) {
+	if total < 1 {
+		return nil, errors.New(fmt.Sprintf("Pool Total can not be initialized by %d\n", total))
+	}
+	size := int(total)
+	container := make(chan Entity, size)
+	idContainer := make(map[uint32]bool)
+	for i := 0; i < size; i++ {
+		newEntity := genEntity()
+		if entityType != reflect.TypeOf(newEntity) {
+			return nil, errors.New(fmt.Sprintf("The Type of given is not real type -> %v\n", entityType))
+		}
+		container <- newEntity
+		idContainer[newEntity.Id()] = true
+	}
+	pool := myPool{
+		total:       total,
+		etype:       entityType,
+		genEntity:   genEntity,
+		container:   container,
+		idContainer: idContainer,
+	}
+	return &pool, nil
 }
