@@ -1,7 +1,7 @@
-package ipl
+package itempipeline
 
 import (
-	"goreptile/base"
+	"webcrawler/base"
 )
 
 type Itempipeline interface {

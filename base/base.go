@@ -2,10 +2,8 @@ package base
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net/http"
-	"reflect"
 	"sync"
 )
 
@@ -102,18 +100,7 @@ func NewCrawlerError(errType ErrorType, errMsg string) CrawlerError {
 	return &myCrawlerError{errMsg: errMsg, errType: errType}
 }
 
-// pool
-type Pool interface {
-	Take() (Entity, error)
-	Return(analyzer Entity) error
-	Total() uint32
-	Used() uint32
-}
-type Entity interface {
-	Id() uint32
-}
-
-// signal
+// 停止信号
 type StopSign interface {
 	Sign() bool
 	Signed() bool
@@ -124,84 +111,61 @@ type StopSign interface {
 	Summary() string
 }
 
-// 实体池 实现类型
-type myPool struct {
-	total       uint32
-	etype       reflect.Type
-	genEntity   func() Entity
-	container   chan Entity
-	idContainer map[uint32]bool
-	m           sync.Mutex
+type myStopSign struct {
+	signed       bool
+	dealCountMap map[string]uint32
+	m            sync.RWMutex
 }
 
-func (s *myPool) Take() (Entity, error) {
-	e, ok := <-s.container
+func (s *myStopSign) DealTotal() uint32 {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return uint32(len(s.dealCountMap))
+}
+func (s *myStopSign) DealCount(code string) uint32 {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	v, ok := s.dealCountMap[code]
 	if !ok {
-		return nil, errors.New("The inner container is invalid!")
-	}
-	s.idContainer[e.Id()] = false
-	return e, nil
-}
-func (s *myPool) Total() uint32 {
-	return s.total
-}
-func (s *myPool) Used() uint32 {
-	return uint32(len(s.container))
-}
-func (s *myPool) Return(e Entity) error {
-	if e == nil {
-		return errors.New("The return entity is nil")
-	}
-	if s.etype != reflect.TypeOf(e) {
-		return errors.New("Type is not match!")
-	}
-	eid := e.Id()
-	caseResult := s.optidContianer(eid, false, true)
-	if caseResult == 1 {
-		s.container <- e
-		return nil
-	} else if caseResult == 0 {
-		return errors.New("Entity  is already in the pool!")
-	} else {
-		return errors.New("Entity id is illegal!!")
-	}
-}
-func (s *myPool) optidContianer(eid uint32, oldValue bool, newValue bool) int8 {
-	s.m.Lock()
-	defer s.m.Unlock()
-	v, ok := s.idContainer[eid]
-	if !ok {
-		return -1
-	}
-	if v != oldValue {
 		return 0
 	}
-	s.idContainer[eid] = newValue
-	return 1
+	return v
 }
-
-// 创建一个实体pool
-func NewPool(total uint32, entityType reflect.Type, genEntity func() Entity) (Pool, error) {
-	if total < 1 {
-		return nil, errors.New(fmt.Sprintf("Pool Total can not be initialized by %d\n", total))
+func (s *myStopSign) Summary() string {
+	return ""
+}
+func (s *myStopSign) Reset() {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.signed = false
+	s.dealCountMap = make(map[string]uint32)
+}
+func (s *myStopSign) Sign() bool {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if s.signed {
+		return false
 	}
-	size := int(total)
-	container := make(chan Entity, size)
-	idContainer := make(map[uint32]bool)
-	for i := 0; i < size; i++ {
-		newEntity := genEntity()
-		if entityType != reflect.TypeOf(newEntity) {
-			return nil, errors.New(fmt.Sprintf("The Type of given is not real type -> %v\n", entityType))
-		}
-		container <- newEntity
-		idContainer[newEntity.Id()] = true
+	s.signed = true
+	return true
+}
+func (s *myStopSign) Signed() bool {
+	return s.signed
+}
+func (s *myStopSign) Deal(codeSting string) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if !s.signed {
+		return
 	}
-	pool := myPool{
-		total:       total,
-		etype:       entityType,
-		genEntity:   genEntity,
-		container:   container,
-		idContainer: idContainer,
+	if _, ok := s.dealCountMap[codeSting]; !ok {
+		s.dealCountMap[codeSting] = 1
+	} else {
+		s.dealCountMap[codeSting] += 1
 	}
-	return &pool, nil
+}
+func NewStopSign() StopSign {
+	return &myStopSign{
+		dealCountMap: make(map[string]uint32),
+	}
 }

@@ -3,8 +3,10 @@ package middleware
 import (
 	"errors"
 	"fmt"
-	"goreptile/base"
+	"math"
+	"reflect"
 	"sync"
+	"webcrawler/base"
 )
 
 // 通道管理器
@@ -139,4 +141,130 @@ func NewChannelManager(channelLen uint) ChannelManager {
 	chanman := &myChannelManager{}
 	chanman.Init(channelLen, true)
 	return chanman
+}
+
+// id creator
+type IdGenertor interface {
+	GetUint32() uint32
+}
+type cyclicIdGenertor struct {
+	sn    uint32
+	ended bool
+	m     sync.Mutex
+}
+
+func NewIdGenertor() IdGenertor {
+	return &cyclicIdGenertor{}
+}
+func (s *cyclicIdGenertor) GetUint32() uint32 {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if s.ended {
+		defer func() {
+			s.ended = false
+		}()
+		s.sn = 0
+		return s.sn
+	}
+	id := s.sn
+	if id < math.MaxUint32 {
+		s.sn++
+	} else {
+		s.ended = true
+	}
+	return id
+}
+
+// pool
+type Pool interface {
+	Take() (Entity, error)
+	Return(analyzer Entity) error
+	Total() uint32
+	Used() uint32
+}
+
+type Entity interface {
+	Id() uint32
+}
+
+// 实体池 实现类型
+type myPool struct {
+	total       uint32
+	etype       reflect.Type
+	genEntity   func() Entity
+	container   chan Entity
+	idContainer map[uint32]bool
+	m           sync.Mutex
+}
+
+func (s *myPool) Take() (Entity, error) {
+	e, ok := <-s.container
+	if !ok {
+		return nil, errors.New("The inner container is invalid!")
+	}
+	s.idContainer[e.Id()] = false
+	return e, nil
+}
+func (s *myPool) Total() uint32 {
+	return s.total
+}
+func (s *myPool) Used() uint32 {
+	return uint32(len(s.container))
+}
+func (s *myPool) Return(e Entity) error {
+	if e == nil {
+		return errors.New("The return entity is nil")
+	}
+	if s.etype != reflect.TypeOf(e) {
+		return errors.New("Type is not match!")
+	}
+	eid := e.Id()
+	caseResult := s.optidContianer(eid, false, true)
+	if caseResult == 1 {
+		s.container <- e
+		return nil
+	} else if caseResult == 0 {
+		return errors.New("Entity  is already in the pool!")
+	} else {
+		return errors.New("Entity id is illegal!!")
+	}
+}
+func (s *myPool) optidContianer(eid uint32, oldValue bool, newValue bool) int8 {
+	s.m.Lock()
+	defer s.m.Unlock()
+	v, ok := s.idContainer[eid]
+	if !ok {
+		return -1
+	}
+	if v != oldValue {
+		return 0
+	}
+	s.idContainer[eid] = newValue
+	return 1
+}
+
+// 创建一个实体pool
+func NewPool(total uint32, entityType reflect.Type, genEntity func() Entity) (Pool, error) {
+	if total < 1 {
+		return nil, errors.New(fmt.Sprintf("Pool Total can not be initialized by %d\n", total))
+	}
+	size := int(total)
+	container := make(chan Entity, size)
+	idContainer := make(map[uint32]bool)
+	for i := 0; i < size; i++ {
+		newEntity := genEntity()
+		if entityType != reflect.TypeOf(newEntity) {
+			return nil, errors.New(fmt.Sprintf("The Type of given is not real type -> %v\n", entityType))
+		}
+		container <- newEntity
+		idContainer[newEntity.Id()] = true
+	}
+	pool := myPool{
+		total:       total,
+		etype:       entityType,
+		genEntity:   genEntity,
+		container:   container,
+		idContainer: idContainer,
+	}
+	return &pool, nil
 }

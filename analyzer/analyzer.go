@@ -1,8 +1,8 @@
-package anlz
+package analyzer
 
 import (
-	"goreptile/base"
 	"net/http"
+	"webcrawler/base"
 )
 
 type ParseResponse func(httpResp *http.Response, respDepth uint32) ([]base.Data, []error)

@@ -1,8 +1,8 @@
 package scheduler
 
 import (
-	"goreptle/anlz"
 	"net/http"
+	"webcrawler/anlz"
 )
 
 type GenHttpClient func() *http.Client
