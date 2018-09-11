@@ -268,3 +268,73 @@ func NewPool(total uint32, entityType reflect.Type, genEntity func() Entity) (Po
 	}
 	return &pool, nil
 }
+
+// 停止信号
+type StopSign interface {
+	Sign() bool
+	Signed() bool
+	Reset()
+	Deal(code string)
+	DealCount(code string) uint32
+	DealTotal() uint32
+	Summary() string
+}
+
+type myStopSign struct {
+	signed       bool
+	dealCountMap map[string]uint32
+	m            sync.RWMutex
+}
+
+func (s *myStopSign) DealTotal() uint32 {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	return uint32(len(s.dealCountMap))
+}
+func (s *myStopSign) DealCount(code string) uint32 {
+	s.m.RLock()
+	defer s.m.RUnlock()
+	v, ok := s.dealCountMap[code]
+	if !ok {
+		return 0
+	}
+	return v
+}
+func (s *myStopSign) Summary() string {
+	return ""
+}
+func (s *myStopSign) Reset() {
+	s.m.Lock()
+	defer s.m.Unlock()
+	s.signed = false
+	s.dealCountMap = make(map[string]uint32)
+}
+func (s *myStopSign) Sign() bool {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if s.signed {
+		return false
+	}
+	s.signed = true
+	return true
+}
+func (s *myStopSign) Signed() bool {
+	return s.signed
+}
+func (s *myStopSign) Deal(codeSting string) {
+	s.m.Lock()
+	defer s.m.Unlock()
+	if !s.signed {
+		return
+	}
+	if _, ok := s.dealCountMap[codeSting]; !ok {
+		s.dealCountMap[codeSting] = 1
+	} else {
+		s.dealCountMap[codeSting] += 1
+	}
+}
+func NewStopSign() StopSign {
+	return &myStopSign{
+		dealCountMap: make(map[string]uint32),
+	}
+}
