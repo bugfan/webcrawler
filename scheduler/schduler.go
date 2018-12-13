@@ -54,8 +54,8 @@ type myScheduler struct {
 	itemPipeLine  ipl.ItemPipeline
 	running       uint32 //运行 bool值
 	// 辅助
-	// reqCache requestCache
-	urlMap map[string]bool
+	reqCache requestCache
+	urlMap   map[string]bool
 }
 
 func (s *myScheduler) Start(channelLen uint, poolSize uint32, crawlDepth uint32, httpClientGenerator GenHttpClient, respParses []anlz.ParseResponse,
@@ -275,6 +275,40 @@ func (s *myScheduler) sendResp(resp base.Response, code string) bool {
 	}
 	s.getRespChan() <- resp
 	return true
+}
+func (s *myScheduler) saveReqToCache(req base.Request, code string) bool {
+	httpReq := req.HttpReq()
+	if httpReq == nil {
+		logrus.Warnln("Ignore the request !it is nil http")
+		return false
+	}
+	reqUrl := httpReq.URL
+	if reqUrl == nil {
+		logrus.Warnln("Ignore the request ! it url is invalid")
+		return false
+	}
+	if strings.ToLower(reqUrl.Scheme) != "http" {
+		logrus.Warnln("Ignore the request ! it scheme is not http")
+		return false
+	}
+	if _, ok := s.urlMap[reqUrl.String()]; ok {
+		logrus.Warnln("Ignore the request ! it url is repeated :", reqUrl)
+		return false
+	}
+	if pd, _ := getPrimaryDomain(httpReq.Host); pd != s.primaryDomain {
+		logrus.Warnln("Ignore the request ! it host is not promaryDomain repeated :",
+			httpReq.Host, s.primaryDomain, reqUrl)
+		return false
+	}
+	if req.Depth() > s.crawlDepth {
+		logrus.Warnln("Ignore the request ! it depth is greater than :", req.Depth(), s.crawlDepth, reqUrl)
+		return false
+	}
+	if s.stopSign.Signed() {
+		s.stopSign.Deal(code)
+		return false
+	}
+	s.reqCache.put(&req)
 }
 
 const (
